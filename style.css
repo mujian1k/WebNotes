@@ -560,6 +560,17 @@ select.form-input { cursor: pointer; }
   right: 12px;
   font-size: 14px;
 }
+.countdown-display {
+  position: absolute;
+  top: 70px;
+  right: 12px;
+  font-size: 11px;
+  color: #666;
+  background: rgba(255,255,255,0.85);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+}
 .canvas-selector {
   display: flex;
   flex-direction: column;

@@ -12,8 +12,20 @@ let isDraggingCard = false;
 let currentCanvasStyle = 'plain';
 let hasMovedWhileDragging = false;
 let originalNoteData = null;
+let countdownInterval = null;
 
 function getTodayKey() { return new Date().toDateString(); }
+
+function formatCountdown(ms) {
+  if (ms <= 0) return '已到期';
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const secs = s % 60;
+  if (h > 0) return `${h}小时${Math.floor(m)}分钟`;
+  if (m > 0) return `${Math.floor(m)}分钟`;
+  return `${secs}秒`;
+}
 
 function loadData() {
   const d = localStorage.getItem('stickyNotes');
@@ -40,6 +52,53 @@ function updateCompletedTodayDisplay() {
 function updateTrashBadge() {
   const cnt = notes.filter(n => n.isCompleted).length;
   document.getElementById('trashBadge').textContent = cnt;
+}
+
+function updateCountdowns() {
+  const now = Date.now();
+  notes.filter(n => !n.isCompleted && n.reminder).forEach(note => {
+    const countdownEl = document.getElementById('countdown-' + note.id);
+    if (countdownEl) {
+      const timeLeft = new Date(note.reminder).getTime() - now;
+      countdownEl.textContent = formatCountdown(timeLeft);
+      // 如果时间到了但还没触发，触发一次
+      if (timeLeft <= 0 && !reminderTimeouts[note.id + '_triggered']) {
+        reminderTimeouts[note.id + '_triggered'] = true;
+        triggerReminder(note);
+      }
+    }
+  });
+}
+
+function triggerReminder(note) {
+  if (Notification.permission === 'granted') {
+    new Notification('便签提醒', { body: note.title || '便签提醒', icon: '📝' });
+  } else if (Notification.permission !== 'denied') {
+    Notification.requestPermission().then(perm => {
+      if (perm === 'granted') new Notification('便签提醒', { body: note.title || '便签提醒', icon: '📝' });
+    });
+  }
+}
+
+function setupReminders() {
+  const now = Date.now();
+  // 清除所有旧的计时器
+  Object.values(reminderTimeouts).forEach(t => clearTimeout(t));
+  reminderTimeouts = {};
+  
+  notes.filter(n => !n.isCompleted && n.reminder).forEach(note => {
+    const reminderTime = new Date(note.reminder).getTime();
+    const timeLeft = reminderTime - now;
+    if (timeLeft > 0) {
+      reminderTimeouts[note.id] = setTimeout(() => {
+        triggerReminder(note);
+        delete reminderTimeouts[note.id];
+      }, timeLeft);
+    } else {
+      // 时间已到，立即触发
+      triggerReminder(note);
+    }
+  });
 }
 
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).substr(2); }
@@ -139,12 +198,16 @@ function renderCards() {
           ${renderProgress(note)}
         ` : ''}
       </div>
-      ${note.reminder ? `<div class="reminder-icon">🔔</div>` : ''}
+      ${note.reminder ? `
+        <div class="reminder-icon" title="提醒：${new Date(note.reminder).toLocaleString()}">🔔</div>
+        <div class="countdown-display" id="countdown-${note.id}"></div>
+      ` : ''}
     `;
     canvas.appendChild(card);
     card.addEventListener('mousedown', onCardMouseDown);
     card.addEventListener('click', onCardClick);
   });
+  updateCountdowns(); // 渲染完卡片后立即更新倒计时
 }
 
 function darkenColor(hex, percent) {
@@ -689,9 +752,22 @@ function openEditModal(noteId) {
   document.getElementById('modalTitle').textContent = '编辑便签';
   document.getElementById('noteTitle').value = note.title;
   document.getElementById('noteContent').value = note.content;
-  document.getElementById('reminderPreset').value = '';
-  document.getElementById('reminderHours').value = '';
-  document.getElementById('reminderMinutes').value = '';
+  // 如果有提醒时间，显示在输入框
+  if (note.reminder) {
+    const now = Date.now();
+    const diff = note.reminder - now;
+    if (diff > 0) {
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      document.getElementById('reminderHours').value = hours > 0 ? hours : '';
+      document.getElementById('reminderMinutes').value = minutes > 0 ? minutes : '';
+      document.getElementById('reminderPreset').value = '';
+    }
+  } else {
+    document.getElementById('reminderPreset').value = '';
+    document.getElementById('reminderHours').value = '';
+    document.getElementById('reminderMinutes').value = '';
+  }
   renderColorPicker();
   renderSubtaskEditList();
   showModal();
@@ -782,6 +858,20 @@ function init() {
   updateCompletedTodayDisplay();
   updateTrashBadge();
   initEventListeners();
+  
+  // 设置提醒和倒计时
+  setupReminders();
+  updateCountdowns(); // 立即更新一次
+  countdownInterval = setInterval(() => {
+    updateCountdowns();
+    // 每分钟重新检查一次提醒设置，防止浏览器冻结
+    const now = Date.now();
+    if (!setupReminders.lastCheck || now - setupReminders.lastCheck > 60000) {
+      setupReminders.lastCheck = now;
+      setupReminders();
+    }
+  }, 1000);
+  
   if (Notification.permission === 'default') {
     Notification.requestPermission();
   }
