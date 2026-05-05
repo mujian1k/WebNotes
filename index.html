@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>卡通便签</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="top-bar">
+  <div class="nav-buttons">
+    <button class="nav-btn" id="btnNew">新建</button>
+    <button class="nav-btn" id="btnManage">管理</button>
+    <button class="nav-btn" id="btnStats">统计</button>
+    <button class="nav-btn" id="btnCanvas">背景</button>
+    <button class="nav-btn" id="btnImportExport">导入</button>
+  </div>
+  <div class="float-completed">今日已完成: <strong id="completedTodayCount">0</strong></div>
+</div>
+<div class="main-canvas canvas-plain" id="mainCanvas"></div>
+<button class="float-trash" id="btnTrash" title="废纸篓">
+  <svg class="trash-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M4 6h16M6 6v14a2 2 0 002 2h8a2 2 0 002-2V6m-3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+  </svg>
+  <span class="badge" id="trashBadge">0</span>
+</button>
+
+<div class="modal-overlay" id="manageModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title-bar">便签管理</div>
+      <button class="modal-close-btn close-modal">✕</button>
+    </div>
+    <div class="modal-content">
+      <div class="panel-list" id="manageList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="trashModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title-bar">废纸篓</div>
+      <button class="modal-close-btn close-modal">✕</button>
+    </div>
+    <div class="modal-content">
+      <div class="trash-header" style="padding:0 0 15px 0;border-bottom:1px solid rgba(0,0,0,0.06);margin-bottom:15px;">
+        <span></span>
+        <button class="modal-btn danger" id="emptyTrash" style="padding:8px 14px;font-size:12px;">清空所有</button>
+      </div>
+      <div class="trash-section" id="trashList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="statsModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title-bar">统计</div>
+      <button class="modal-close-btn close-modal">✕</button>
+    </div>
+    <div class="modal-content">
+      <div class="stats-grid" id="statsGrid"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="importExportModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title-bar">导入/导出</div>
+      <button class="modal-close-btn close-modal">✕</button>
+    </div>
+    <div class="modal-content">
+      <p style="font-size:14px;color:#666;margin-bottom:20px;">导出所有便签数据为JSON文件，或从JSON文件导入数据。</p>
+      <div style="display:flex;gap:10px;">
+        <button class="modal-btn primary" id="btnExport">导出JSON</button>
+        <button class="modal-btn secondary" id="btnImport">导入JSON</button>
+      </div>
+      <input type="file" id="importFile" accept=".json" style="display:none;">
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="canvasModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title-bar">背景设置</div>
+      <button class="modal-close-btn close-modal">✕</button>
+    </div>
+    <div class="modal-content">
+      <div class="canvas-selector">
+        <button class="canvas-btn" data-canvas="plain">素色</button>
+        <button class="canvas-btn" data-canvas="grid">格纹</button>
+        <button class="canvas-btn" data-canvas="dots">网点</button>
+        <button class="canvas-btn" data-canvas="paper">深色背景</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="noteModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title-bar" id="modalTitle">新建便签</div>
+      <button class="modal-close-btn" id="closeNoteModal" title="关闭">✕</button>
+    </div>
+    <div class="modal-content">
+      <div class="modal-icon-buttons">
+        <button class="copy-icon-btn" id="btnCopy" title="复制便签">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+        </button>
+        <button class="delete-icon-btn" id="btnDeleteNote" title="删除便签">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+          </svg>
+        </button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">标题</label>
+        <input type="text" class="form-input" id="noteTitle" placeholder="输入标题...">
+      </div>
+      <div class="form-group">
+        <label class="form-label">内容</label>
+        <textarea class="form-input" id="noteContent" placeholder="输入内容..."></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">子任务</label>
+        <div class="subtask-edit-list" id="subtaskEditList"></div>
+        <div class="subtask-add-row">
+          <input type="text" class="form-input" id="subtaskInput" placeholder="输入子任务，回车添加...">
+          <button class="modal-btn secondary" id="addSubtask" style="padding:10px 16px;flex:none;">+</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">背景颜色</label>
+        <div class="color-picker" id="colorPicker"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">提醒时间</label>
+        <div class="reminder-input-group">
+          <select class="reminder-select" id="reminderPreset">
+            <option value="">自定义</option>
+            <option value="5">5分钟后</option>
+            <option value="10">10分钟后</option>
+            <option value="30">30分钟后</option>
+            <option value="60">1小时后</option>
+            <option value="180">3小时后</option>
+            <option value="360">6小时后</option>
+          </select>
+          <input type="number" class="reminder-input" id="reminderHours" placeholder="时" min="0" max="23">
+          <span class="reminder-separator">:</span>
+          <input type="number" class="reminder-input" id="reminderMinutes" placeholder="分" min="0" max="59">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn primary" id="saveNote">确定</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
