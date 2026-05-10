@@ -15,15 +15,16 @@
     <button class="nav-btn" id="btnCanvas">背景</button>
     <button class="nav-btn" id="btnImportExport">导入</button>
   </div>
-  <div class="float-completed">今日已完成: <strong id="completedTodayCount">0</strong></div>
+  <div class="right-buttons">
+    <button class="nav-btn float-trash-top" id="btnTrash" title="废纸篓">
+      <svg class="trash-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 6h16M6 6v14a2 2 0 002 2h8a2 2 0 002-2V6m-3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+      </svg>
+    </button>
+    <button class="float-completed" id="completedTodayBtn">今日已完成: <strong id="completedTodayCount">0</strong></button>
+  </div>
 </div>
 <div class="main-canvas canvas-plain" id="mainCanvas"></div>
-<button class="float-trash" id="btnTrash" title="废纸篓">
-  <svg class="trash-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-    <path d="M4 6h16M6 6v14a2 2 0 002 2h8a2 2 0 002-2V6m-3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
-  </svg>
-  <span class="badge" id="trashBadge">0</span>
-</button>
 
 <div class="modal-overlay" id="manageModal">
   <div class="modal">
@@ -94,6 +95,7 @@
         <button class="canvas-btn" data-canvas="grid">格纹</button>
         <button class="canvas-btn" data-canvas="dots">网点</button>
         <button class="canvas-btn" data-canvas="paper">深色背景</button>
+        <button class="canvas-btn" data-canvas="darkDots">深色波点</button>
       </div>
     </div>
   </div>
@@ -102,10 +104,6 @@
 <div class="modal-overlay" id="noteModal">
   <div class="modal">
     <div class="modal-header">
-      <div class="modal-title-bar" id="modalTitle">新建便签</div>
-      <button class="modal-close-btn" id="closeNoteModal" title="关闭">✕</button>
-    </div>
-    <div class="modal-content">
       <div class="modal-icon-buttons">
         <button class="copy-icon-btn" id="btnCopy" title="复制便签">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -119,6 +117,10 @@
           </svg>
         </button>
       </div>
+      <div class="modal-title-bar" id="modalTitle">新建便签</div>
+      <button class="modal-close-btn" id="closeNoteModal" title="关闭">✕</button>
+    </div>
+    <div class="modal-content">
       <div class="form-group">
         <label class="form-label">标题</label>
         <input type="text" class="form-input" id="noteTitle" placeholder="输入标题...">
@@ -133,6 +135,15 @@
         <div class="subtask-add-row">
           <input type="text" class="form-input" id="subtaskInput" placeholder="输入子任务，回车添加...">
           <button class="modal-btn secondary" id="addSubtask" style="padding:10px 16px;flex:none;">+</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">状态</label>
+        <div class="status-picker" id="statusPicker">
+          <button class="status-btn active" data-status="todo">未完成</button>
+          <button class="status-btn" data-status="progress">进行中</button>
+          <button class="status-btn" data-status="done">已完成</button>
+          <button class="status-btn" data-status="paused">暂停</button>
         </div>
       </div>
       <div class="form-group">
@@ -156,9 +167,22 @@
           <input type="number" class="reminder-input" id="reminderMinutes" placeholder="分" min="0" max="59">
         </div>
       </div>
+      <div id="createdAtDisplay" style="font-size:12px;color:#999;margin-bottom:15px;padding:10px;background:rgba(0,0,0,0.03);border-radius:8px;"></div>
       <div class="modal-actions">
         <button class="modal-btn primary" id="saveNote">确定</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="todayCompletedModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title-bar">今日已完成</div>
+      <button class="modal-close-btn close-modal">✕</button>
+    </div>
+    <div class="modal-content">
+      <div class="trash-section" id="todayCompletedList"></div>
     </div>
   </div>
 </div>

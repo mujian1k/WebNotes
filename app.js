@@ -5,6 +5,7 @@ let draggedCard = null;
 let dragOffsetX = 0;
 let dragOffsetY = 0;
 let currentColorIndex = 0;
+let currentStatus = 'todo';
 let editingSubtasks = [];
 let reminderTimeouts = {};
 let completedToday = 0;
@@ -13,8 +14,28 @@ let currentCanvasStyle = 'plain';
 let hasMovedWhileDragging = false;
 let originalNoteData = null;
 let countdownInterval = null;
+let notificationPermissionRequested = false;
 
 function getTodayKey() { return new Date().toDateString(); }
+
+function requestNotificationPermission() {
+  if (Notification.permission === 'granted') return;
+  if (Notification.permission === 'denied') return;
+  
+  if (!notificationPermissionRequested) {
+    notificationPermissionRequested = true;
+    Notification.requestPermission().then(permission => {
+      localStorage.setItem('notificationPermission', permission);
+    });
+  }
+}
+
+function checkNotificationPermission() {
+  const saved = localStorage.getItem('notificationPermission');
+  if (saved) {
+    Notification.permission = saved;
+  }
+}
 
 function formatCountdown(ms) {
   if (ms <= 0) return '已到期';
@@ -27,11 +48,42 @@ function formatCountdown(ms) {
   return `${secs}秒`;
 }
 
+function playCompletionSound() {
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const oscillator = audioContext.createOscillator();
+  const gainNode = audioContext.createGain();
+  
+  oscillator.connect(gainNode);
+  gainNode.connect(audioContext.destination);
+  
+  oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
+  oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1);
+  oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2);
+  
+  gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+  
+  oscillator.start(audioContext.currentTime);
+  oscillator.stop(audioContext.currentTime + 0.3);
+}
+
+function triggerCompletionEffect(card) {
+  if (card) {
+    card.style.animation = 'completionBounce 0.5s ease-out';
+    setTimeout(() => {
+      card.style.animation = '';
+    }, 500);
+  }
+}
+
 function loadData() {
   const d = localStorage.getItem('stickyNotes');
   if (d) {
     const parsed = JSON.parse(d);
-    notes = parsed.notes || [];
+    notes = (parsed.notes || []).map(note => ({
+      ...note,
+      status: note.status || (note.isCompleted ? 'done' : 'todo')
+    }));
     if (parsed.completedTodayDate !== getTodayKey()) {
       completedToday = 0;
     } else {
@@ -50,8 +102,7 @@ function updateCompletedTodayDisplay() {
 }
 
 function updateTrashBadge() {
-  const cnt = notes.filter(n => n.isCompleted).length;
-  document.getElementById('trashBadge').textContent = cnt;
+  // 取消红点提示功能
 }
 
 function updateCountdowns() {
@@ -61,8 +112,10 @@ function updateCountdowns() {
     if (countdownEl) {
       const timeLeft = new Date(note.reminder).getTime() - now;
       countdownEl.textContent = formatCountdown(timeLeft);
-      // 如果时间到了但还没触发，触发一次
-      if (timeLeft <= 0 && !reminderTimeouts[note.id + '_triggered']) {
+      if (timeLeft <= 0) {
+        countdownEl.textContent = '已到期';
+      }
+      if (timeLeft <= 0 && !reminderTimeouts[note.id] && !reminderTimeouts[note.id + '_triggered']) {
         reminderTimeouts[note.id + '_triggered'] = true;
         triggerReminder(note);
       }
@@ -82,21 +135,28 @@ function triggerReminder(note) {
 
 function setupReminders() {
   const now = Date.now();
-  // 清除所有旧的计时器
-  Object.values(reminderTimeouts).forEach(t => clearTimeout(t));
-  reminderTimeouts = {};
+  // 只清除timeout，不清除_triggered标志
+  const triggeredFlags = {};
+  for (const key in reminderTimeouts) {
+    if (key.endsWith('_triggered')) {
+      triggeredFlags[key] = reminderTimeouts[key];
+    } else {
+      clearTimeout(reminderTimeouts[key]);
+    }
+  }
+  reminderTimeouts = triggeredFlags;
   
   notes.filter(n => !n.isCompleted && n.reminder).forEach(note => {
     const reminderTime = new Date(note.reminder).getTime();
     const timeLeft = reminderTime - now;
-    if (timeLeft > 0) {
+    if (timeLeft > 0 && !reminderTimeouts[note.id + '_triggered']) {
       reminderTimeouts[note.id] = setTimeout(() => {
-        triggerReminder(note);
+        if (!reminderTimeouts[note.id + '_triggered']) {
+          reminderTimeouts[note.id + '_triggered'] = true;
+          triggerReminder(note);
+        }
         delete reminderTimeouts[note.id];
       }, timeLeft);
-    } else {
-      // 时间已到，立即触发
-      triggerReminder(note);
     }
   });
 }
@@ -131,7 +191,10 @@ function createSampleNotes() {
       color: COLORS[0],
       reminder: null,
       isCompleted: false,
-      position: pos1
+      status: 'todo',
+      position: pos1,
+      isStarred: false,
+      createdAt: new Date().toISOString()
     });
     const pos2 = randomPosition();
     notes.push({
@@ -146,7 +209,10 @@ function createSampleNotes() {
       color: COLORS[2],
       reminder: null,
       isCompleted: false,
-      position: pos2
+      status: 'todo',
+      position: pos2,
+      isStarred: false,
+      createdAt: new Date().toISOString()
     });
     saveData();
   }
@@ -179,10 +245,31 @@ function renderCards() {
     card.style.top = note.position.y + 'px';
     card.style.zIndex = 100 + index;
     const headerBg = darkenColor(note.color, 25);
+    const isDoneStatus = note.status === 'done';
+    
+    const statusLabels = {
+      todo: '未完成',
+      progress: '进行中',
+      done: '已完成',
+      paused: '暂停'
+    };
+    const statusColors = {
+      todo: '#666',
+      progress: '#81c723',
+      done: '#f59e0b',
+      paused: '#ef4444'
+    };
+    
     card.innerHTML = `
       <div class="note-card-header" style="background:${headerBg};" data-noteid="${note.id}">
+        <button class="card-star-btn ${note.isStarred ? 'starred' : ''}" data-noteid="${note.id}" title="${note.isStarred ? '取消重要' : '标记重要'}">★</button>
         <div class="card-title">${escapeHtml(note.title) || '无标题'}</div>
-        <div class="card-radio ${note.isCompleted ? 'checked' : ''}" data-noteid="${note.id}"></div>
+        <div class="header-right">
+          <div class="card-status" style="background:${statusColors[note.status] || '#666'}">${statusLabels[note.status] || '未完成'}</div>
+          <button class="card-action-btn" data-noteid="${note.id}" title="${isDoneStatus ? '关闭' : '完成'}">
+            ${isDoneStatus ? '✕' : '○'}
+          </button>
+        </div>
       </div>
       <div class="note-card-body">
         <div class="card-content">${escapeHtml(note.content)}</div>
@@ -198,7 +285,7 @@ function renderCards() {
           ${renderProgress(note)}
         ` : ''}
       </div>
-      ${note.reminder ? `
+      ${note.reminder && note.status !== 'done' ? `
         <div class="reminder-icon" title="提醒：${new Date(note.reminder).toLocaleString()}">🔔</div>
         <div class="countdown-display" id="countdown-${note.id}"></div>
       ` : ''}
@@ -221,7 +308,7 @@ function darkenColor(hex, percent) {
 
 function onCardMouseDown(e) {
   const header = e.target.closest('.note-card-header');
-  if (header && header.contains(e.target) && !e.target.classList.contains('card-radio')) {
+  if (header && header.contains(e.target) && !e.target.classList.contains('card-action-btn')) {
     const noteId = header.dataset.noteid;
     const card = document.getElementById('card-' + noteId);
     draggedCard = card;
@@ -245,7 +332,12 @@ function onCardClick(e) {
   isDraggingCard = false;
   hasMovedWhileDragging = false;
   
-  if (e.target.classList.contains('card-radio')) {
+  if (e.target.classList.contains('card-star-btn')) {
+    const noteId = e.target.dataset.noteid;
+    toggleStar(noteId);
+    return;
+  }
+  if (e.target.classList.contains('card-action-btn')) {
     const noteId = e.target.dataset.noteid;
     toggleNoteComplete(noteId);
     return;
@@ -263,19 +355,38 @@ function onCardClick(e) {
   }
 }
 
+function toggleStar(noteId) {
+  const note = notes.find(n => n.id === noteId);
+  if (note) {
+    note.isStarred = !note.isStarred;
+    saveData();
+    renderCards();
+  }
+}
+
 function toggleNoteComplete(noteId) {
   const note = notes.find(n => n.id === noteId);
   if (!note) return;
-  if (note.isCompleted) {
-    note.isCompleted = false;
-    if (completedToday > 0) completedToday--;
-  } else {
+  
+  const card = document.getElementById('card-' + note.id);
+  
+  if (note.status === 'done') {
+    // 关闭按钮 - 移入废纸篓
     note.isCompleted = true;
+    if (!note.completedDate || note.completedDate !== getTodayKey()) {
+      completedToday++;
+      note.completedDate = getTodayKey();
+    }
+  } else {
+    // 完成按钮 - 切换到done状态
+    note.status = 'done';
     note.subtasks.forEach(s => s.done = true);
     if (!note.completedDate || note.completedDate !== getTodayKey()) {
       completedToday++;
       note.completedDate = getTodayKey();
     }
+    playCompletionSound();
+    triggerCompletionEffect(card);
   }
   saveData();
   renderCards();
@@ -283,17 +394,48 @@ function toggleNoteComplete(noteId) {
   updateTrashBadge();
 }
 
+function renderStatusPicker() {
+  const picker = document.getElementById('statusPicker');
+  picker.innerHTML = '';
+  ['todo', 'progress', 'done', 'paused'].forEach(status => {
+    const btn = document.createElement('button');
+    btn.className = 'status-btn';
+    btn.dataset.status = status;
+    const labels = { todo: '未完成', progress: '进行中', done: '已完成', paused: '暂停' };
+    btn.textContent = labels[status];
+    if (status === currentStatus) {
+      btn.classList.add('active');
+    }
+    btn.addEventListener('click', () => {
+      currentStatus = status;
+      renderStatusPicker();
+    });
+    picker.appendChild(btn);
+  });
+}
+
 function toggleSubtask(noteId, stIdx) {
   const note = notes.find(n => n.id === noteId);
   if (!note) return;
-  note.subtasks[stIdx].done = !note.subtasks[stIdx].done;
+  
+  const wasDone = note.subtasks[stIdx].done;
+  note.subtasks[stIdx].done = !wasDone;
+  
+  const card = document.getElementById('card-' + noteId);
+  if (!wasDone && card) {
+    playCompletionSound();
+    triggerCompletionEffect(card);
+  }
+  
   const allDone = note.subtasks.length > 0 && note.subtasks.every(s => s.done);
-  if (allDone && !note.isCompleted) {
-    note.isCompleted = true;
+  if (allDone && note.status !== 'done') {
+    note.status = 'done';
     if (!note.completedDate || note.completedDate !== getTodayKey()) {
       completedToday++;
       note.completedDate = getTodayKey();
     }
+    playCompletionSound();
+    triggerCompletionEffect(card);
   }
   saveData();
   renderCards();
@@ -311,7 +453,7 @@ function handleMouseMove(e) {
     let newY = e.clientY - canvasRect.top - dragOffsetY;
 
     newX = Math.max(10, Math.min(newX, canvasRect.width - cardRect.width - 10));
-    newY = Math.max(50, Math.min(newY, canvasRect.height - cardRect.height - 80));
+    newY = Math.max(10, Math.min(newY, canvasRect.height - cardRect.height - 10));
 
     draggedCard.style.left = newX + 'px';
     draggedCard.style.top = newY + 'px';
@@ -339,7 +481,7 @@ function handleMouseMove(e) {
         }
       }
     });
-
+    
     draggedCard.style.zIndex = String(currentMaxZ);
   }
 }
@@ -373,7 +515,7 @@ function closeModalById(id) {
 }
 
 function hideAllModals() {
-  ['manageModal','trashModal','statsModal','importExportModal','canvasModal','noteModal'].forEach(m => {
+  ['manageModal','trashModal','statsModal','importExportModal','canvasModal','noteModal','todayCompletedModal'].forEach(m => {
     document.getElementById(m).classList.remove('show');
   });
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -385,6 +527,7 @@ function renderManagePanel() {
     const done = note.subtasks.filter(s => s.done).length;
     const total = note.subtasks.length;
     const pct = total > 0 ? Math.round(done / total * 100) : 0;
+    const date = formatDate(note.createdAt);
     let statusHtml;
     if (pct === 100 && total > 0) {
       statusHtml = '<span class="status-badge status-done">已完成</span>';
@@ -395,7 +538,10 @@ function renderManagePanel() {
     }
     return `
       <div class="panel-item" data-noteid="${note.id}">
-        <div class="panel-item-title">${escapeHtml(note.title) || '无标题'}</div>
+        <div class="panel-item-header">
+          <div class="panel-item-title">${escapeHtml(note.title) || '无标题'}</div>
+          <div class="panel-item-date">${date}</div>
+        </div>
         <div class="panel-item-summary">${escapeHtml(note.content)}</div>
         <div class="panel-item-status">
           ${statusHtml}
@@ -430,15 +576,21 @@ function renderTrashPanel() {
     list.innerHTML = '<div class="trash-empty">废纸篓是空的</div>';
     return;
   }
-  list.innerHTML = trashNotes.map(note => `
-    <div class="trash-card">
-      <div class="trash-card-title">${escapeHtml(note.title) || '无标题'}</div>
-      <div class="trash-card-actions">
-        <button class="item-action-btn restore" data-noteid="${note.id}">恢复</button>
-        <button class="item-action-btn delete" data-noteid="${note.id}">彻底删除</button>
+  list.innerHTML = trashNotes.map(note => {
+    const date = formatDate(note.createdAt);
+    return `
+      <div class="trash-card">
+        <div class="trash-card-header">
+          <div class="trash-card-title">${escapeHtml(note.title) || '无标题'}</div>
+          <div class="trash-card-date">${date}</div>
+        </div>
+        <div class="trash-card-actions">
+          <button class="item-action-btn restore" data-noteid="${note.id}">恢复</button>
+          <button class="item-action-btn delete" data-noteid="${note.id}">彻底删除</button>
+        </div>
       </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 
   list.querySelectorAll('.restore').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -467,16 +619,100 @@ function renderTrashPanel() {
 }
 
 function renderStatsPanel() {
-  const total = notes.length;
-  const completed = notes.filter(n => n.isCompleted).length;
-  const pending = total - completed;
-  const rate = total > 0 ? Math.round(completed / total * 100) : 0;
+  const todayStats = getDailyStats();
+  const weekStats = getWeeklyStats();
+  const monthStats = getMonthlyStats();
+  
   document.getElementById('statsGrid').innerHTML = `
-    <div class="stat-card"><div class="stat-value">${total}</div><div class="stat-label">总便签数</div></div>
-    <div class="stat-card"><div class="stat-value">${pending}</div><div class="stat-label">未完成</div></div>
-    <div class="stat-card"><div class="stat-value">${completedToday}</div><div class="stat-label">今日完成</div></div>
-    <div class="stat-card"><div class="stat-value">${rate}%</div><div class="stat-label">整体完成率</div></div>
+    <div class="stats-section">
+      <div class="stats-section-title">📅 今日</div>
+      <div class="stats-row">
+        <div class="stat-item"><span class="stat-num">${todayStats.completed}</span><span class="stat-text">完成</span></div>
+        <div class="stat-item"><span class="stat-num">${todayStats.total}</span><span class="stat-text">总数</span></div>
+        <div class="stat-item"><span class="stat-num">${todayStats.rate}%</span><span class="stat-text">完成率</span></div>
+      </div>
+    </div>
+    <div class="stats-section">
+      <div class="stats-section-title">📆 本周</div>
+      <div class="stats-row">
+        <div class="stat-item"><span class="stat-num">${weekStats.completed}</span><span class="stat-text">完成</span></div>
+        <div class="stat-item"><span class="stat-num">${weekStats.total}</span><span class="stat-text">总数</span></div>
+        <div class="stat-item"><span class="stat-num">${weekStats.rate}%</span><span class="stat-text">完成率</span></div>
+      </div>
+    </div>
+    <div class="stats-section">
+      <div class="stats-section-title">📊 本月</div>
+      <div class="stats-row">
+        <div class="stat-item"><span class="stat-num">${monthStats.completed}</span><span class="stat-text">完成</span></div>
+        <div class="stat-item"><span class="stat-num">${monthStats.total}</span><span class="stat-text">总数</span></div>
+        <div class="stat-item"><span class="stat-num">${monthStats.rate}%</span><span class="stat-text">完成率</span></div>
+      </div>
+    </div>
   `;
+}
+
+function getDailyStats() {
+  const today = getTodayKey();
+  const completed = notes.filter(n => n.completedDate === today).length;
+  const total = notes.length;
+  const rate = total > 0 ? Math.round(completed / total * 100) : 0;
+  return { completed, total, rate };
+}
+
+function getWeeklyStats() {
+  const now = new Date();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+  
+  const completed = notes.filter(n => {
+    if (!n.completedDate) return false;
+    const completedDate = new Date(n.completedDate);
+    return completedDate >= startOfWeek;
+  }).length;
+  
+  const total = notes.length;
+  const rate = total > 0 ? Math.round(completed / total * 100) : 0;
+  return { completed, total, rate };
+}
+
+function getMonthlyStats() {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  
+  const completed = notes.filter(n => {
+    if (!n.completedDate) return false;
+    const completedDate = new Date(n.completedDate);
+    return completedDate >= startOfMonth;
+  }).length;
+  
+  const total = notes.length;
+  const rate = total > 0 ? Math.round(completed / total * 100) : 0;
+  return { completed, total, rate };
+}
+
+function renderTodayCompletedPanel() {
+  const list = document.getElementById('todayCompletedList');
+  const todayNotes = notes.filter(n => n.completedDate === getTodayKey());
+  if (todayNotes.length === 0) {
+    list.innerHTML = '<div class="trash-empty">今日还没有完成的便签</div>';
+    return;
+  }
+  list.innerHTML = todayNotes.map(note => {
+    const date = formatDate(note.createdAt);
+    return `
+      <div class="trash-card">
+        <div class="trash-card-title">${escapeHtml(note.title) || '无标题'}</div>
+        <div class="trash-card-date">创建时间：${date}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '-';
+  const date = new Date(dateStr);
+  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function exportData() {
@@ -617,7 +853,9 @@ function copyNote() {
     color: COLORS[currentColorIndex],
     reminder: null,
     isCompleted: false,
-    position: randomPosition()
+    position: randomPosition(),
+    isStarred: false,
+    createdAt: new Date().toISOString()
   };
   notes.push(newNote);
   saveData();
@@ -658,6 +896,7 @@ function saveNoteFromModal() {
       note.content = content;
       note.subtasks = editingSubtasks.map(s => ({...s}));
       note.color = COLORS[currentColorIndex];
+      note.status = currentStatus;
       
       if (totalMinutes > 0) {
         const reminderTime = new Date(Date.now() + totalMinutes * 60000);
@@ -691,7 +930,10 @@ function saveNoteFromModal() {
       color: COLORS[currentColorIndex],
       reminder: null,
       isCompleted: false,
-      position: pos
+      status: currentStatus,
+      position: pos,
+      isStarred: false,
+      createdAt: new Date().toISOString()
     };
     notes.push(newNote);
     
@@ -721,6 +963,7 @@ function openNewModal() {
   editingNoteId = null;
   editingSubtasks = [];
   currentColorIndex = 0;
+  currentStatus = 'todo';
   originalNoteData = null;
   document.getElementById('modalTitle').textContent = '新建便签';
   document.getElementById('noteTitle').value = '';
@@ -729,8 +972,12 @@ function openNewModal() {
   document.getElementById('reminderHours').value = '';
   document.getElementById('reminderMinutes').value = '';
   renderColorPicker();
+  renderStatusPicker();
   renderSubtaskEditList();
   showModal();
+  setTimeout(() => {
+    document.getElementById('noteTitle').focus();
+  }, 100);
 }
 
 function openEditModal(noteId) {
@@ -741,6 +988,7 @@ function openEditModal(noteId) {
   editingSubtasks = note.subtasks.map(s => ({...s}));
   currentColorIndex = COLORS.indexOf(note.color);
   if (currentColorIndex < 0) currentColorIndex = 0;
+  currentStatus = note.status || 'todo';
   
   originalNoteData = {
     title: note.title,
@@ -752,6 +1000,7 @@ function openEditModal(noteId) {
   document.getElementById('modalTitle').textContent = '编辑便签';
   document.getElementById('noteTitle').value = note.title;
   document.getElementById('noteContent').value = note.content;
+  document.getElementById('createdAtDisplay').textContent = '创建时间：' + formatDate(note.createdAt);
   // 如果有提醒时间，显示在输入框
   if (note.reminder) {
     const now = Date.now();
@@ -769,6 +1018,7 @@ function openEditModal(noteId) {
     document.getElementById('reminderMinutes').value = '';
   }
   renderColorPicker();
+  renderStatusPicker();
   renderSubtaskEditList();
   showModal();
 }
@@ -784,7 +1034,10 @@ function emptyTrash() {
 }
 
 function initEventListeners() {
-  document.getElementById('btnNew').addEventListener('click', openNewModal);
+  document.getElementById('btnNew').addEventListener('click', () => {
+    requestNotificationPermission();
+    openNewModal();
+  });
 
   document.getElementById('btnManage').addEventListener('click', () => {
     renderManagePanel();
@@ -794,6 +1047,11 @@ function initEventListeners() {
   document.getElementById('btnStats').addEventListener('click', () => {
     renderStatsPanel();
     openModal('statsModal');
+  });
+
+  document.getElementById('completedTodayBtn').addEventListener('click', () => {
+    renderTodayCompletedPanel();
+    openModal('todayCompletedModal');
   });
 
   document.getElementById('btnImportExport').addEventListener('click', () => {
@@ -815,7 +1073,10 @@ function initEventListeners() {
     });
   });
 
-  document.getElementById('closeNoteModal').addEventListener('click', handleCloseModal);
+  document.getElementById('closeNoteModal').addEventListener('click', e => {
+    e.stopPropagation();
+    handleCloseModal();
+  });
 
   document.getElementById('emptyTrash').addEventListener('click', emptyTrash);
 
@@ -825,9 +1086,18 @@ function initEventListeners() {
 
   document.getElementById('addSubtask').addEventListener('click', addSubtaskFromInput);
   document.getElementById('subtaskInput').addEventListener('keypress', e => { if (e.key === 'Enter') addSubtaskFromInput(); });
+  document.getElementById('noteTitle').addEventListener('keypress', e => { 
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      saveNoteFromModal();
+    }
+  });
 
   document.getElementById('btnCopy').addEventListener('click', copyNote);
-  document.getElementById('btnDeleteNote').addEventListener('click', deleteNoteFromModal);
+  document.getElementById('btnDeleteNote').addEventListener('click', e => {
+    e.stopPropagation();
+    deleteNoteFromModal();
+  });
   document.getElementById('saveNote').addEventListener('click', saveNoteFromModal);
 
   document.querySelectorAll('.canvas-btn').forEach(btn => {
@@ -852,6 +1122,7 @@ function initEventListeners() {
 
 function init() {
   loadData();
+  checkNotificationPermission();
   createSampleNotes();
   applyCanvasStyle(currentCanvasStyle);
   renderCards();
@@ -871,10 +1142,6 @@ function init() {
       setupReminders();
     }
   }, 1000);
-  
-  if (Notification.permission === 'default') {
-    Notification.requestPermission();
-  }
 }
 
 document.addEventListener('DOMContentLoaded', init);
