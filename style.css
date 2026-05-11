@@ -205,6 +205,9 @@ body {
   background: #fffef0;
   padding: 12px 16px;
 }
+.note-card-body.body-min-height {
+  min-height: 80px;
+}
 .card-content {
   font-size: 13px;
   color: #666;

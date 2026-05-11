@@ -271,7 +271,7 @@ function renderCards() {
           </button>
         </div>
       </div>
-      <div class="note-card-body">
+      <div class="note-card-body ${!note.content && note.subtasks.length === 0 && note.reminder ? 'body-min-height' : ''}">
         <div class="card-content">${escapeHtml(note.content)}</div>
         ${note.subtasks.length > 0 ? `
           <div class="subtask-list">
